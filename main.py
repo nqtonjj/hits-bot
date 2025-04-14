@@ -1,61 +1,59 @@
-from dotenv import load_dotenv
-import os
+from flask import request
 import json
-import time
+import os
 import requests
-from keep_alive import keep_alive
-from datetime import datetime
 
-load_dotenv()
-
-# Telegram config (ẩn bằng biến môi trường)
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-# File log task đã gửi
-SENT_TASKS_FILE = 'sent_tasks.json'
-
-# Tạo file nếu chưa có
+# Đảm bảo bạn đã load sent_tasks từ file
+SENT_TASKS_FILE = "sent_tasks.json"
 try:
-    with open(SENT_TASKS_FILE, 'r') as f:
+    with open(SENT_TASKS_FILE, "r") as f:
         sent_tasks = json.load(f)
 except:
     sent_tasks = []
-    with open(SENT_TASKS_FILE, 'w') as f:
-        json.dump(sent_tasks, f)
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_IDS = ["1924694116"]  # hoặc đọc từ file chat_ids.json nếu cần
+
+KEYWORDS = ["VN", "EN-US", "Ads"]  # ngươi muốn lọc gì thì chỉnh ở đây
 
 def send_telegram(task_id, title):
+    from datetime import datetime
     now = datetime.now().strftime("%H:%M")
-    message = (f"🔔 New HIT Alert!\n"
-               f"🆔 Task ID: {task_id}\n"
-               f"📌 Title: {title}\n"
-               f"🕓 Time: {now}\n"
-               f"-- H.A Lite 🍀")
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={'chat_id': CHAT_ID, 'text': message})
+    message = (
+        f"🔔 New HIT Alert!\n"
+        f"🆔 Task ID: {task_id}\n"
+        f"📌 Title: {title}\n"
+        f"🕓 Time: {now}\n"
+        f"-- H.A Lite 🍀"
+    )
+    for chat_id in CHAT_IDS:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": message})
 
+@app.route('/v1/notifications', methods=['POST'])
+def notify_hits():
+    data = request.get_json()
+    hits = data.get("hits", [])
 
-def check_hit():
-    fake_hits = [
-        {"id": 1001, "title": "Search Engine Judging (EN-US)"},
-        {"id": 1002, "title": "Web Page Quality (VN)"},
-        {"id": 1003, "title": "Ad Relevance Judging"},
-    ]
-    new = []
-    for hit in fake_hits:
-        if hit["id"] not in sent_tasks:
-            send_telegram(hit["id"], hit["title"])
-            sent_tasks.append(hit["id"])
-            new.append(hit["id"])
-    if new:
-        with open(SENT_TASKS_FILE, 'w') as f:
+    new_sent = False
+    for hit in hits:
+        task_id = str(hit.get("Id"))
+        title = hit.get("FriendlyName", "")
+
+        if task_id in sent_tasks:
+            continue
+
+        # Lọc từ khóa
+        if not any(kw.lower() in title.lower() for kw in KEYWORDS):
+            continue
+
+        send_telegram(task_id, title)
+        sent_tasks.append(task_id)
+        new_sent = True
+
+    # Ghi lại những task mới đã gửi
+    if new_sent:
+        with open(SENT_TASKS_FILE, "w") as f:
             json.dump(sent_tasks, f)
 
-
-keep_alive()
-
-while True:
-    check_hit()
-    print("✅ Đã kiểm tra HITs")
-    time.sleep(60)
+    return {"status": "ok"}, 200
